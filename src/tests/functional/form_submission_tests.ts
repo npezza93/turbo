@@ -135,16 +135,16 @@ export class FormSubmissionTests extends TurboDriveTestCase {
 
   async "test form submission with Turbo disabled on the form"() {
     this.listenForFormSubmissions()
-    await this.clickSelector('#disabled form[data-turbo="false"] input[type=submit]')
+    await this.clickSelector('#turbo-false form[data-turbo="false"] input[type=submit]')
     await this.nextBody
     await this.querySelector("#element-id")
 
     this.assert.notOk(await this.turboFormSubmitted)
   }
 
-  async "test form submission with Turbo disabled on the submitter"() {
+  async "test form submission with [data-turbo=false] on the submitter"() {
     this.listenForFormSubmissions()
-    await this.clickSelector('#disabled form:not([data-turbo]) input[data-turbo="false"]')
+    await this.clickSelector('#turbo-false form:not([data-turbo]) input[data-turbo="false"]')
     await this.nextBody
     await this.querySelector("#element-id")
 
@@ -165,6 +165,14 @@ export class FormSubmissionTests extends TurboDriveTestCase {
     await this.nextBeat
 
     this.assert.notOk(await this.turboFormSubmitted)
+  }
+
+  async "test form submission targets disabled frame"() {
+    this.remote.execute(() => document.getElementById("frame")?.setAttribute("disabled", ""))
+    await this.clickSelector('#targets-frame [type="submit"')
+    await this.nextBody
+
+    this.assert.equal(await this.pathname, "/src/tests/fixtures/one.html")
   }
 
   listenForFormSubmissions() {
