@@ -1,5 +1,5 @@
 /*!
-Turbo 8.0.2
+Turbo 8.0.4
 Copyright © 2024 37signals LLC
  */
 /**
@@ -126,7 +126,7 @@ class FrameElement extends HTMLElement {
   loaded = Promise.resolve()
 
   static get observedAttributes() {
-    return ["disabled", "complete", "loading", "src"]
+    return ["disabled", "loading", "src"]
   }
 
   constructor() {
@@ -149,11 +149,9 @@ class FrameElement extends HTMLElement {
   attributeChangedCallback(name) {
     if (name == "loading") {
       this.delegate.loadingStyleChanged();
-    } else if (name == "complete") {
-      this.delegate.completeChanged();
     } else if (name == "src") {
       this.delegate.sourceURLChanged();
-    } else {
+    } else if (name == "disabled") {
       this.delegate.disabledChanged();
     }
   }
@@ -4806,7 +4804,6 @@ class MorphRenderer extends PageRenderer {
     this.isMorphingTurboFrame = this.#isFrameReloadedWithMorph(currentElement);
 
     Idiomorph.morph(currentElement, newElement, {
-      ignoreActiveValue: true,
       morphStyle: morphStyle,
       callbacks: {
         beforeNodeAdded: this.#shouldAddElement,
@@ -5200,8 +5197,7 @@ class Session {
   refresh(url, requestId) {
     const isRecentRequest = requestId && this.recentRequests.has(requestId);
     if (!isRecentRequest) {
-      this.cache.exemptPageFromPreview();
-      this.visit(url, { action: "replace" });
+      this.visit(url, { action: "replace", shouldCacheSnapshot: false });
     }
   }
 
@@ -5775,18 +5771,10 @@ class FrameController {
 
   sourceURLReloaded() {
     const { src } = this.element;
-    this.#ignoringChangesToAttribute("complete", () => {
-      this.element.removeAttribute("complete");
-    });
+    this.element.removeAttribute("complete");
     this.element.src = null;
     this.element.src = src;
     return this.element.loaded
-  }
-
-  completeChanged() {
-    if (this.#isIgnoringChangesTo("complete")) return
-
-    this.#loadSourceURL();
   }
 
   loadingStyleChanged() {
@@ -6213,13 +6201,11 @@ class FrameController {
   }
 
   set complete(value) {
-    this.#ignoringChangesToAttribute("complete", () => {
-      if (value) {
-        this.element.setAttribute("complete", "");
-      } else {
-        this.element.removeAttribute("complete");
-      }
-    });
+    if (value) {
+      this.element.setAttribute("complete", "");
+    } else {
+      this.element.removeAttribute("complete");
+    }
   }
 
   get isActive() {
@@ -6276,6 +6262,69 @@ function activateElement(element, currentURL) {
   }
 }
 
+function morph(streamElement) {
+  const morphStyle = streamElement.hasAttribute("children-only") ? "innerHTML" : "outerHTML";
+  streamElement.targetElements.forEach((element) => {
+    Idiomorph.morph(element, streamElement.templateContent, {
+      morphStyle: morphStyle,
+      callbacks: {
+        beforeNodeAdded,
+        beforeNodeMorphed,
+        beforeAttributeUpdated,
+        beforeNodeRemoved,
+        afterNodeMorphed
+      }
+    });
+  });
+}
+
+function beforeNodeAdded(node) {
+  return !(node.id && node.hasAttribute("data-turbo-permanent") && document.getElementById(node.id))
+}
+
+function beforeNodeRemoved(node) {
+  return beforeNodeAdded(node)
+}
+
+function beforeNodeMorphed(target, newElement) {
+  if (target instanceof HTMLElement) {
+    if (!target.hasAttribute("data-turbo-permanent")) {
+      const event = dispatch("turbo:before-morph-element", {
+        cancelable: true,
+        target,
+        detail: {
+          newElement
+        }
+      });
+      return !event.defaultPrevented
+    }
+    return false
+  }
+}
+
+function beforeAttributeUpdated(attributeName, target, mutationType) {
+  const event = dispatch("turbo:before-morph-attribute", {
+    cancelable: true,
+    target,
+    detail: {
+      attributeName,
+      mutationType
+    }
+  });
+  return !event.defaultPrevented
+}
+
+function afterNodeMorphed(target, newElement) {
+  if (newElement instanceof HTMLElement) {
+    dispatch("turbo:morph-element", {
+      target,
+      detail: {
+        newElement
+      }
+    });
+  }
+}
+
 const StreamActions = {
   after() {
     this.targetElements.forEach((e) => e.parentElement?.insertBefore(this.templateContent, e.nextSibling));
@@ -6312,6 +6361,10 @@ const StreamActions = {
 
   refresh() {
     session.refresh(this.baseURI, this.requestId);
+  },
+
+  morph() {
+    morph(this);
   }
 };
 
